@@ -115,11 +115,13 @@ func main() {
 	}
 
 	src.ParseDynamic()
-	src.ParseBat()
+	raw := src.ParseBat()
 	if *parseOnly {
 		msg("vhd ok")
 		return
 	}
+	src.ScanUnused(raw)
+	raw = nil
 
 	// Write VHD header
 	dst := CreateVHD(dstName, *overwrite)
@@ -313,7 +315,7 @@ func (f *VHD) ParseHeader() {
 		die("saved state vhd (can't be modified)")
 	}
 	if nonZero(f.hdr[85:]) {
-		die("unexpected non-zero data in vhd header")
+		die("non-zero reserved field in vhd header")
 	}
 
 	f.dynOff = r64(f.hdr, 16)
@@ -398,7 +400,7 @@ func (f *VHD) ParseDynamic() {
 }
 
 // ParseBat validates and extracts data block offsets from the BAT.
-func (f *VHD) ParseBat() {
+func (f *VHD) ParseBat() RawBat {
 	msg("bat offset: %#x", f.batOff)
 	if f.batOff < hdrSize+dynSize || !aligned(f.batOff, sector) {
 		die("invalid bat offset")
@@ -484,6 +486,51 @@ func (f *VHD) ParseBat() {
 		msg("extra space between last data block and footer: %d bytes",
 			f.ftrOff-pos)
 	}
+	return raw
+}
+
+// ScanUnused checks the file for any non-zero data in unused space.
+func (f *VHD) ScanUnused(raw RawBat) {
+	check := func(buf []byte) {
+		if nonZero(buf) {
+			die("non-zero data in unused space prior to offset: %#x", tell(f))
+		}
+	}
+	var buf [len(zero)]byte
+	scan := func(off, lim uint64) {
+		if n := int(lim - off); off < lim {
+			for seek(f, off); n > len(buf); n -= len(buf) {
+				check(read(f, buf[:]))
+			}
+			check(read(f, buf[:n]))
+		} else if off > lim {
+			die("invalid offset range: %#x:%#x", off, lim)
+		}
+	}
+	scan(hdrSize, f.dynOff)
+	scan(f.dynOff+dynSize, f.batOff)
+
+	raw = append(raw, uint32(f.ftrOff/sector))
+	off := seek(f, f.EndOfBat())
+	lim := uint64(raw[0]) * sector
+	ext := readn(f, int(lim-off))
+	for off = 0; off < uint64(len(ext)) && ext[off] == 0xFF; off++ {
+		// Find the actual end of bat
+	}
+	if off > 0 {
+		msg("bat extension: %+d sector(s)", off/sector)
+		if !aligned(off, sector) {
+			die("unaligned bat extension")
+		}
+	}
+	check(ext[off:])
+
+	bs := f.BlockSize()
+	op := NewOp("scanning unused space", len(raw)-1)
+	for i, s := range raw[:len(raw)-1] {
+		scan(uint64(s)*sector+bs, uint64(raw[i+1])*sector)
+		op.Step()
+	}
 }
 
 // BatEntry represents a single BAT sector offset entry.
@@ -559,6 +606,7 @@ func (op *Op) Step() {
 	log.SetOutput(os.Stderr)
 	if op.i < op.n {
 		b.Truncate(b.Len() - 1)
+		b.WriteByte(' ')
 	}
 	b.WriteTo(os.Stdout)
 }
