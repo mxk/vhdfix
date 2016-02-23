@@ -1,16 +1,14 @@
 vhdfix
 ======
 
-Utility for manipulating VHD files. By default, it writes a new VHD file of the
-smallest possible size and reorders the data blocks by virtual sector order. It
-provides various options to control the format of the output file.
+Utility for manipulating Virtual Hard Disk (VHD) files. By default, vhdfix
+creates the smallest possible copy of the source VHD with the data blocks in
+optimal order. It performs a thorough validation of the source VHD and reports
+any problems found. The output format can be controlled with command-line
+options.
 
-Installation:
+To build and run:
 
 1. Install [Go](https://golang.org/dl/).
 2. `go build vhdfix.go`
-
-Usage:
-
-* `vhdfix [options] <src> [<dst>]`
-* `vhdfix -h`
+3. `./vhdfix -h`
